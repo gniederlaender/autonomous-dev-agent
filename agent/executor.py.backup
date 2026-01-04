@@ -1,0 +1,296 @@
+"""Task executor using Claude Code to make changes."""
+
+import subprocess
+import os
+import json
+from typing import Dict, Any
+from datetime import datetime
+
+
+class Executor:
+    """Execute tasks by invoking Claude Code."""
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.project_path = config.get('project', {}).get('path')
+        self.git_config = config.get('execution', {})
+
+    def execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a task and return the result."""
+        result = {
+            'task_id': task.get('id'),
+            'success': False,
+            'changes_made': [],
+            'commit_hash': None,
+            'error': None,
+            'execution_time': datetime.now().isoformat()
+        }
+
+        try:
+            # Build the prompt for Claude
+            prompt = self._build_prompt(task)
+
+            # Execute via Claude Code
+            execution_result = self._execute_via_claude(prompt)
+
+            if execution_result.get('success'):
+                # Commit changes if configured
+                if self.git_config.get('git_commit', True):
+                    commit_result = self._commit_changes(task)
+                    result['commit_hash'] = commit_result.get('hash')
+                    result['changes_made'] = commit_result.get('files', [])
+
+                # Push to remote if configured
+                if self.git_config.get('git_push', True):
+                    self._push_changes()
+
+                result['success'] = True
+                result['output'] = execution_result.get('output', '')
+
+            else:
+                result['error'] = execution_result.get('error')
+
+        except Exception as e:
+            result['error'] = str(e)
+
+        return result
+
+    def _build_prompt(self, task: Dict[str, Any]) -> str:
+        """Build a prompt for Claude Code to execute the task."""
+        task_type = task.get('type', 'feature')
+        title = task.get('title', '')
+        description = task.get('description', '')
+
+        prompt = f"""Task: {title}
+
+Type: {task_type}
+Priority: {task.get('priority', 'medium')}
+
+Description:
+{description}
+
+Instructions:
+"""
+
+        if task_type == 'bug':
+            prompt += """1. Analyze the issue and identify the root cause
+2. Implement a fix for the bug
+3. Test the fix to ensure it works
+4. Update any related documentation if needed
+
+Please fix this bug in the application."""
+
+        elif task_type in ['feature', 'enhancement']:
+            prompt += """1. Analyze the requirements
+2. Design the implementation approach
+3. Implement the feature
+4. Test the implementation
+5. Update documentation as needed
+
+Please implement this feature in the application."""
+
+        elif task_type == 'refactor':
+            prompt += """1. Identify the code that needs refactoring
+2. Plan the refactoring approach
+3. Implement the refactoring while maintaining functionality
+4. Test to ensure nothing broke
+
+Please refactor the code as described."""
+
+        elif task_type == 'docs':
+            prompt += """1. Identify what documentation needs to be updated or created
+2. Write clear, concise documentation
+3. Ensure examples are accurate
+
+Please update the documentation."""
+
+        elif task_type == 'test':
+            prompt += """1. Identify what needs testing
+2. Write comprehensive tests
+3. Ensure tests pass
+
+Please add tests for the application."""
+
+        else:
+            prompt += "Please complete this task for the application."
+
+        prompt += f"\n\nWorking directory: {self.project_path}"
+
+        return prompt
+
+    def _execute_via_claude(self, prompt: str) -> Dict[str, Any]:
+        """Execute the prompt via Anthropic API."""
+        try:
+            import anthropic
+
+            # Get API key from environment
+            api_key = os.environ.get('ANTHROPIC_API_KEY')
+            if not api_key:
+                return {
+                    'success': False,
+                    'error': 'ANTHROPIC_API_KEY environment variable not set'
+                }
+
+            # Initialize client
+            client = anthropic.Anthropic(
+                api_key=api_key,
+                max_retries=2
+            )
+
+            # Create message with extended thinking
+            response = client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=8000,
+                thinking={
+                    "type": "enabled",
+                    "budget_tokens": 5000
+                },
+                messages=[{
+                    "role": "user",
+                    "content": prompt
+                }]
+            )
+
+            # Extract response text
+            output_text = ""
+            for block in response.content:
+                if block.type == "text":
+                    output_text += block.text + "\n"
+
+            # For MVP, we'll return the output but note that actual file changes
+            # need to be implemented based on the response
+            # This is a simplified version - in production, you'd parse the response
+            # and use the Edit/Write tools or direct file manipulation
+
+            return {
+                'success': True,
+                'output': output_text,
+                'note': 'API call successful - manual file changes needed based on response'
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Anthropic API error: {str(e)}'
+            }
+
+    def _commit_changes(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Commit changes to git."""
+        try:
+            # Configure git user
+            git_user_name = self.git_config.get('git_user_name', 'Autonomous Dev Agent')
+            git_user_email = self.git_config.get('git_user_email', 'agent@smartprototypes.net')
+
+            subprocess.run(
+                ['git', 'config', 'user.name', git_user_name],
+                cwd=self.project_path,
+                check=True
+            )
+            subprocess.run(
+                ['git', 'config', 'user.email', git_user_email],
+                cwd=self.project_path,
+                check=True
+            )
+
+            # Check for changes
+            status_result = subprocess.run(
+                ['git', 'status', '--porcelain'],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            if not status_result.stdout.strip():
+                return {
+                    'hash': None,
+                    'files': [],
+                    'message': 'No changes to commit'
+                }
+
+            # Get list of changed files
+            changed_files = [
+                line.strip().split(None, 1)[1]
+                for line in status_result.stdout.strip().split('\n')
+                if line.strip()
+            ]
+
+            # Add all changes
+            subprocess.run(
+                ['git', 'add', '-A'],
+                cwd=self.project_path,
+                check=True
+            )
+
+            # Create commit message
+            commit_msg = self._create_commit_message(task)
+
+            # Commit
+            subprocess.run(
+                ['git', 'commit', '-m', commit_msg],
+                cwd=self.project_path,
+                check=True
+            )
+
+            # Get commit hash
+            hash_result = subprocess.run(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            commit_hash = hash_result.stdout.strip()
+
+            return {
+                'hash': commit_hash,
+                'files': changed_files,
+                'message': commit_msg
+            }
+
+        except subprocess.CalledProcessError as e:
+            raise Exception(f'Git commit failed: {e}')
+
+    def _create_commit_message(self, task: Dict[str, Any]) -> str:
+        """Create a commit message for the task."""
+        task_type = task.get('type', 'change')
+        title = task.get('title', 'Automated change')
+
+        type_prefix = {
+            'bug': 'Fix',
+            'feature': 'Add',
+            'enhancement': 'Enhance',
+            'refactor': 'Refactor',
+            'docs': 'Update docs',
+            'test': 'Add tests'
+        }.get(task_type, 'Update')
+
+        message = f"{type_prefix}: {title}\n\n"
+        message += f"Task ID: {task.get('id')}\n"
+        message += f"Source: {task.get('source', 'unknown')}\n\n"
+
+        description = task.get('description', '')
+        if description:
+            message += f"{description}\n\n"
+
+        message += "🤖 Automated commit by Autonomous Dev Agent"
+
+        return message
+
+    def _push_changes(self):
+        """Push changes to remote repository."""
+        try:
+            branch = self.config.get('project', {}).get('branch', 'main')
+
+            subprocess.run(
+                ['git', 'push', 'origin', branch],
+                cwd=self.project_path,
+                check=True,
+                timeout=60
+            )
+
+        except subprocess.CalledProcessError as e:
+            raise Exception(f'Git push failed: {e}')
+        except subprocess.TimeoutExpired:
+            raise Exception('Git push timed out')
