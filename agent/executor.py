@@ -77,6 +77,9 @@ class Executor:
                     if self.git_config.get('git_push', True):
                         self._push_changes()
 
+                    # Fix permissions for web-accessible projects
+                    self._fix_web_permissions()
+
                     # VERIFICATION: Test the implementation
                     print(f"  → Running verification tests...")
                     verification_result = self._verify_implementation(task)
@@ -404,6 +407,36 @@ Please implement this task now."""
             raise Exception(f'Git push failed: {e}')
         except subprocess.TimeoutExpired:
             raise Exception('Git push timed out')
+
+    def _fix_web_permissions(self):
+        """Fix file permissions for web-accessible projects."""
+        try:
+            # Only fix permissions for projects in /var/www (web-accessible)
+            if not self.project_path.startswith('/var/www'):
+                return
+
+            print(f"  → Fixing web permissions...")
+
+            # Fix file permissions: 644 for files, 755 for directories
+            # Files (HTML, CSS, JS, JSON, images)
+            subprocess.run(
+                f"find {self.project_path} -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.json' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.gif' -o -name '*.svg' \) -exec chmod 644 {{}} \;",
+                shell=True,
+                check=False  # Don't fail if no files found
+            )
+
+            # Directories
+            subprocess.run(
+                f"find {self.project_path} -type d -exec chmod 755 {{}} \;",
+                shell=True,
+                check=False
+            )
+
+            print(f"  ✓ Permissions fixed (644 for files, 755 for directories)")
+
+        except Exception as e:
+            # Don't fail the entire execution if permission fixing fails
+            print(f"  ⚠ Warning: Could not fix permissions: {e}")
 
     def _verify_implementation(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Verify that the implementation actually works."""
