@@ -101,6 +101,34 @@ class Executor:
 
         return result
 
+    def _get_project_context(self) -> str:
+        """Get project-specific context for the prompt."""
+        project_name = self.config.get('project', {}).get('name', '')
+
+        if 'Banking' in project_name or 'banking' in project_name.lower():
+            return f"""PROJECT CONTEXT:
+- This is a UI prototype repository for banking interfaces
+- Located at: {self.project_path}
+- Tech stack: Pure HTML5/CSS3/JavaScript (no frameworks)
+- Prototypes should be in the prototypes/ directory
+- Use modern, clean UI design with banking aesthetics
+- Make prototypes responsive and user-friendly
+- Files are served directly by Apache web server
+- Live URL: https://smartprototypes.net/UI_Prototypes/Banking_Prototypes/"""
+
+        elif 'Family Run' in project_name:
+            return f"""PROJECT CONTEXT:
+- This is a Flask web application for tracking family running activities
+- Located at: {self.project_path}
+- Tech stack: Python/Flask, HTML/CSS/JavaScript, JSON storage
+- Deployed at: https://smartprototypes.net/family_run/"""
+
+        else:
+            # Generic context
+            return f"""PROJECT CONTEXT:
+- Located at: {self.project_path}
+- Review the existing codebase to understand the project structure"""
+
     def _build_prompt(self, task: Dict[str, Any]) -> str:
         """Build a detailed prompt for Claude Code."""
         task_type = task.get('type', 'feature')
@@ -108,13 +136,13 @@ class Executor:
         description = task.get('description', '')
         priority = task.get('priority', 'medium')
 
-        prompt = f"""You are an autonomous developer working on the Family Run Tracker application.
+        # Get project-specific context
+        project_name = self.config.get('project', {}).get('name', 'Unknown Project')
+        project_context = self._get_project_context()
 
-PROJECT CONTEXT:
-- This is a Flask web application for tracking family running activities
-- Located at: {self.project_path}
-- Tech stack: Python/Flask, HTML/CSS/JavaScript, JSON storage
-- Deployed at: https://smartprototypes.net/family_run/
+        prompt = f"""You are an autonomous developer working on the {project_name} project.
+
+{project_context}
 
 TASK DETAILS:
 Type: {task_type}
