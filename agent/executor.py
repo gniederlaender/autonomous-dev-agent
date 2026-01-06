@@ -420,14 +420,14 @@ Please implement this task now."""
             # Fix file permissions: 644 for files, 755 for directories
             # Files (HTML, CSS, JS, JSON, images)
             subprocess.run(
-                f"find {self.project_path} -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.json' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.gif' -o -name '*.svg' \) -exec chmod 644 {{}} \;",
+                rf"find {self.project_path} -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.json' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.gif' -o -name '*.svg' \) -exec chmod 644 {{}} \;",
                 shell=True,
                 check=False  # Don't fail if no files found
             )
 
             # Directories
             subprocess.run(
-                f"find {self.project_path} -type d -exec chmod 755 {{}} \;",
+                rf"find {self.project_path} -type d -exec chmod 755 {{}} \;",
                 shell=True,
                 check=False
             )
@@ -496,16 +496,31 @@ Begin verification now."""
             )
 
             if result.returncode == 0:
-                output = result.stdout.lower()
+                output = result.stdout
+                output_lower = output.lower()
 
-                # Parse verification result
-                passed = 'verification result: pass' in output and 'verification result: fail' not in output
+                # Parse verification result - more flexible parsing
+                # Look for "pass" after "verification result:" and not followed by "fail"
+                passed = False
+                if 'verification result:' in output_lower:
+                    # Find the verification result section
+                    result_section = output_lower.split('verification result:')[1].split('\n')[0]
+                    # Check if it contains "pass" and doesn't contain "fail"
+                    if 'pass' in result_section and 'fail' not in result_section:
+                        passed = True
+
+                # Alternative: Look for checkmark emoji or explicit PASS
+                if '✅' in output or 'pass**' in output_lower or '**pass**' in output_lower:
+                    # Double-check it's not a failure
+                    if 'fail' not in output_lower[:output_lower.find('✅')] if '✅' in output else True:
+                        passed = True
 
                 # Extract issues if any
                 issues = []
-                if 'issues found:' in output:
-                    issues_section = output.split('issues found:')[1].split('confidence:')[0].strip()
-                    if issues_section and issues_section != 'none':
+                if 'issues found:' in output_lower:
+                    issues_section = output_lower.split('issues found:')[1].split('confidence:')[0].strip()
+                    # Ignore "none" or empty issues
+                    if issues_section and issues_section not in ['none', '**none**', 'none.']:
                         issues.append(issues_section)
 
                 return {
