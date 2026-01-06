@@ -16,7 +16,8 @@ echo "========================================" | tee -a "$LOG_FILE"
 
 # Configuration
 AGENT_DIR="/opt/autonomous-dev-agent"
-CONFIG_FILE="$AGENT_DIR/config/family_run.yaml"
+# Use first argument as config file, or default to family_run.yaml
+CONFIG_FILE="${1:-$AGENT_DIR/config/family_run.yaml}"
 PYTHON_BIN="$AGENT_DIR/venv/bin/python"
 
 # Load API key from environment file if it exists
