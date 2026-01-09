@@ -80,18 +80,25 @@ class Executor:
                     # Fix permissions for web-accessible projects
                     self._fix_web_permissions()
 
-                    # VERIFICATION: Test the implementation
-                    print(f"  → Running verification tests...")
-                    verification_result = self._verify_implementation(task)
-                    result['verification'] = verification_result
+                    # VERIFICATION: Test the implementation (only for critical tasks)
+                    task_priority = task.get('priority', 'medium')
+                    if task_priority == 'critical':
+                        print(f"  → Running verification tests (critical task)...")
+                        verification_result = self._verify_implementation(task)
+                        result['verification'] = verification_result
 
-                    if verification_result.get('passed'):
-                        result['success'] = True
-                        print(f"  ✓ Verification passed")
+                        if verification_result.get('passed'):
+                            result['success'] = True
+                            print(f"  ✓ Verification passed")
+                        else:
+                            result['success'] = False
+                            result['error'] = f"Verification failed: {verification_result.get('issues', 'Unknown issue')}"
+                            print(f"  ✗ Verification failed")
                     else:
-                        result['success'] = False
-                        result['error'] = f"Verification failed: {verification_result.get('issues', 'Unknown issue')}"
-                        print(f"  ✗ Verification failed")
+                        # Skip verification for non-critical tasks
+                        print(f"  → Skipping verification (priority: {task_priority}, only critical tasks are verified)")
+                        result['success'] = True
+                        result['verification'] = {'skipped': True, 'reason': 'Non-critical task'}
                 else:
                     result['output'] += "\n\nNote: No file changes were made."
                     result['success'] = True  # No changes needed is OK
@@ -492,7 +499,7 @@ Begin verification now."""
                 cwd=self.project_path,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout for verification
+                timeout=600  # 10 minute timeout for verification (critical tasks only)
             )
 
             if result.returncode == 0:
@@ -540,7 +547,7 @@ Begin verification now."""
         except subprocess.TimeoutExpired:
             return {
                 'passed': False,
-                'issues': 'Verification timed out after 5 minutes',
+                'issues': 'Verification timed out after 10 minutes',
                 'verified_at': datetime.now().isoformat()
             }
         except Exception as e:

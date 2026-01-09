@@ -1,0 +1,55 @@
+project:
+  name: "Tennis Booking Finder"
+  path: "/opt/Tennis_Booking"
+  repo: "gniederlaender/Tennis_Booking"  # Update with actual repo if exists
+  branch: "main"
+
+health_checks:
+  - type: "http"
+    url: "https://smartprototypes.net/tennis/"
+    expected_status: 200
+    timeout: 10
+
+feedback_sources:
+  - type: "file"
+    path: "/opt/Tennis_Booking/feedback.json"
+
+safety_rules:
+  autonomous_execution:
+    - documentation_updates
+    - bug_fixes
+    - new_features
+    - test_additions
+    - refactoring
+    - dependency_updates
+
+  always_escalate:
+    - security_vulnerabilities
+    - breaking_api_changes
+    - credential_changes
+    - deployment_config_changes
+
+execution:
+  git_commit: true
+  git_push: true
+  git_user_name: "Tennis Booking Agent"
+  git_user_email: "agent@smartprototypes.net"
+
+communication:
+  report_format: "markdown"
+  report_path: "/opt/autonomous-dev-agent/reports/tennis_booking"
+
+  email:
+    enabled: true
+    to: "gabor.niederlaender@gmx.at"
+    from: "gabor.niederlaender@gmx.at"
+    subject_prefix: "[Tennis Booking Agent]"
+    smtp_host: "mail.gmx.net"
+    smtp_port: 587
+    use_tls: true
+
+escalation:
+  method: "email"
+  to: "gabor.niederlaender@gmx.at"
+
+risk_tolerance: "medium"  # low, medium, high
