@@ -1,0 +1,58 @@
+project:
+  name: "Management Report"
+  path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report"
+  repo: "gniederlaender/Management_report"
+  branch: "main"
+  admin_only: true  # Only visible in admin mode
+
+health_checks:
+  - type: "http"
+    url: "https://smartprototypes.net/UI_Prototypes/Management_report/"
+    expected_status: 200
+    timeout: 10
+
+feedback_sources:
+  - type: "file"
+    path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report/feedback.json"
+
+safety_rules:
+  autonomous_execution:
+    - documentation_updates
+    - new_features
+    - bug_fixes
+    - ui_improvements
+    - prototype_creation
+    - style_updates
+    - report_generation
+    - dashboard_updates
+
+  always_escalate:
+    - security_vulnerabilities
+    - breaking_changes
+    - infrastructure_changes
+    - data_access_changes
+
+execution:
+  git_commit: true
+  git_push: true
+  git_user_name: "Management Report Agent"
+  git_user_email: "agent@smartprototypes.net"
+
+communication:
+  report_format: "markdown"
+  report_path: "/opt/autonomous-dev-agent/reports/management_report"
+
+  email:
+    enabled: true
+    to: "gabor.niederlaender@gmx.at"
+    from: "gabor.niederlaender@gmx.at"
+    subject_prefix: "[Management Report Agent]"
+    smtp_host: "mail.gmx.net"
+    smtp_port: 587
+    use_tls: true
+
+escalation:
+  method: "email"
+  to: "gabor.niederlaender@gmx.at"
+
+risk_tolerance: "medium"  # low, medium, high
