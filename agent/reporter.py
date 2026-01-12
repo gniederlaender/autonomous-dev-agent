@@ -122,15 +122,56 @@ class Reporter:
                 status_emoji = '✅' if result.get('success') else '❌'
                 report += f"{status_emoji} **{task.get('title', 'Untitled')}**\n"
                 report += f"   - Task ID: {task.get('id')}\n"
+                report += f"   - Type: {task.get('type', 'unknown')}\n"
+                report += f"   - Priority: {task.get('priority', 'unknown')}\n"
+
+                # Add task description if available
+                if task.get('description'):
+                    desc = task.get('description', '')
+                    # Limit description length
+                    if len(desc) > 200:
+                        desc = desc[:200] + "..."
+                    report += f"   - Description: {desc}\n"
 
                 if result.get('commit_hash'):
                     report += f"   - Commit: `{result.get('commit_hash')}`\n"
 
                 if result.get('changes_made'):
-                    report += f"   - Files changed: {len(result.get('changes_made', []))}\n"
+                    files = result.get('changes_made', [])
+                    report += f"   - Files changed ({len(files)}):\n"
+                    for file in files[:10]:  # Limit to first 10 files
+                        report += f"     - `{file}`\n"
+                    if len(files) > 10:
+                        report += f"     - ... and {len(files) - 10} more files\n"
+
+                # Add verification results if available
+                verification = result.get('verification', {})
+                if verification and not verification.get('skipped'):
+                    if verification.get('passed'):
+                        report += f"   - ✓ Verification: PASSED\n"
+                    else:
+                        report += f"   - ✗ Verification: FAILED\n"
+                        if verification.get('issues'):
+                            report += f"     - Issues: {verification.get('issues')}\n"
+                elif verification and verification.get('skipped'):
+                    report += f"   - Verification: Skipped ({verification.get('reason', 'Non-critical task')})\n"
+
+                # Add execution output summary (first 500 chars)
+                if result.get('output'):
+                    output = result.get('output', '')
+                    # Extract meaningful parts (skip empty lines, limit length)
+                    output_lines = [line.strip() for line in output.split('\n') if line.strip()]
+                    if output_lines:
+                        report += f"   - Execution Summary:\n"
+                        summary = '\n'.join(output_lines[:15])  # First 15 non-empty lines
+                        if len(summary) > 800:
+                            summary = summary[:800] + "..."
+                        # Indent each line for better formatting
+                        for line in summary.split('\n'):
+                            report += f"     {line}\n"
 
                 if result.get('error'):
-                    report += f"   - Error: {result.get('error')}\n"
+                    report += f"   - ❌ Error: {result.get('error')}\n"
 
                 report += "\n"
         else:
