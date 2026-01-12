@@ -34,7 +34,7 @@ safety_rules:
 
 execution:
   git_commit: true
-  git_push: true
+  git_push: false  # Disabled until GitHub repository is created
   git_user_name: "Management Report Agent"
   git_user_email: "agent@smartprototypes.net"
 
