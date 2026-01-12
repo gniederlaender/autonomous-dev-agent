@@ -1,6 +1,6 @@
 project:
   name: "Management Report"
-  path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report"
+  path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report/Refactored_Applikation"
   repo: null  # Local-only repository (no remote)
   branch: "main"
   admin_only: true  # Only visible in admin mode
@@ -8,13 +8,13 @@ project:
 
 health_checks:
   - type: "http"
-    url: "https://smartprototypes.net/UI_Prototypes/Management_report/"
+    url: "https://smartprototypes.net/UI_Prototypes/Management_report/Refactored_Applikation/dashboard.html"
     expected_status: 200
     timeout: 10
 
 feedback_sources:
   - type: "file"
-    path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report/feedback.json"
+    path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report/Refactored_Applikation/feedback.json"
 
 safety_rules:
   autonomous_execution:
