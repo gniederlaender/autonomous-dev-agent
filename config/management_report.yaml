@@ -1,9 +1,10 @@
 project:
   name: "Management Report"
   path: "/var/www/smartprototypes.net/public_html/UI_Prototypes/Management_report"
-  repo: "gniederlaender/Management_report"
+  repo: null  # Local-only repository (no remote)
   branch: "main"
   admin_only: true  # Only visible in admin mode
+  local_only: true  # Contains sensitive financial data - keep local
 
 health_checks:
   - type: "http"
@@ -33,8 +34,8 @@ safety_rules:
     - data_access_changes
 
 execution:
-  git_commit: true
-  git_push: false  # Disabled until GitHub repository is created
+  git_commit: true  # Track changes locally
+  git_push: false  # Keep everything local (sensitive financial data)
   git_user_name: "Management Report Agent"
   git_user_email: "agent@smartprototypes.net"
 
