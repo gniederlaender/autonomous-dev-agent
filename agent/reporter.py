@@ -259,10 +259,9 @@ class Reporter:
             project_name = self.config.get('project', {}).get('name', 'Unknown Project')
             subject = f"{subject_prefix} Daily Report - {project_name}"
 
-            # Extract summary for email body
-            lines = report.split('\n')
-            summary = '\n'.join(lines[:30])  # First 30 lines as summary
-            body = f"{summary}\n\n---\n\nFull report saved to:\n{filepath}"
+            # Send complete report in email body (not just summary)
+            # Users want to see all execution details in the email
+            body = f"{report}\n\n---\n\nFull report also saved to:\n{filepath}"
 
             # Create email message
             msg = MIMEMultipart()
