@@ -23,9 +23,10 @@ feedback_sources:
   - type: "file"
     path: "/opt/family_run/feedback.json"
 
-  - type: "logs"
-    path: "/opt/family_run/logs/error.log"
-    max_lines: 100
+  # Disabled: Log monitoring creates repetitive tasks for old log entries
+  # - type: "logs"
+  #   path: "/opt/family_run/logs/error.log"
+  #   max_lines: 100
 
 safety_rules:
   autonomous_execution:
