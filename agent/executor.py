@@ -4,7 +4,8 @@ import subprocess
 import os
 import json
 import uuid
-from typing import Dict, Any
+import glob
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 
@@ -17,29 +18,114 @@ class Executor:
         self.git_config = config.get('execution', {})
         self.session_file = '/opt/autonomous-dev-agent/state/sessions.json'
         self.sessions = self._load_sessions()
+        self.claude_projects_dir = os.path.expanduser('~/.claude/projects')
 
-    def _load_sessions(self) -> Dict[str, str]:
-        """Load session IDs for projects."""
+    def _load_sessions(self) -> Dict[str, Dict[str, Any]]:
+        """Load session data for projects."""
         if os.path.exists(self.session_file):
             with open(self.session_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                # Migrate old format (string) to new format (dict)
+                migrated = {}
+                for key, value in data.items():
+                    if isinstance(value, str):
+                        # Old format: just session_id string
+                        migrated[key] = {
+                            'session_id': value,
+                            'created_at': None,
+                            'last_used': None,
+                            'project_path': None
+                        }
+                    else:
+                        migrated[key] = value
+                return migrated
         return {}
 
     def _save_sessions(self):
-        """Save session IDs."""
+        """Save session data."""
         os.makedirs(os.path.dirname(self.session_file), exist_ok=True)
         with open(self.session_file, 'w') as f:
             json.dump(self.sessions, f, indent=2)
 
-    def _get_project_session_id(self) -> str:
-        """Get or create session ID for this project."""
+    def _get_claude_project_dir(self) -> str:
+        """Get Claude's project directory for this project."""
+        # Claude encodes paths by replacing special chars with dashes
+        # e.g., /opt/Tennis_Booking becomes -opt-Tennis-Booking
+        # e.g., smartprototypes.net becomes smartprototypes-net
+        path_encoded = self.project_path.replace('/', '-').replace('_', '-').replace('.', '-')
+        return os.path.join(self.claude_projects_dir, path_encoded)
+
+    def _get_session_file_path(self, session_id: str) -> Optional[str]:
+        """Get the path to a session's jsonl file."""
+        project_dir = self._get_claude_project_dir()
+        session_file = os.path.join(project_dir, f"{session_id}.jsonl")
+        if os.path.exists(session_file):
+            return session_file
+        return None
+
+    def _get_session_size(self, session_id: str) -> int:
+        """Get the size of a session file in bytes."""
+        session_file = self._get_session_file_path(session_id)
+        if session_file and os.path.exists(session_file):
+            return os.path.getsize(session_file)
+        return 0
+
+    def _get_project_session(self) -> Dict[str, Any]:
+        """Get session data for this project."""
         project_name = self.config.get('project', {}).get('name', 'default')
 
         if project_name not in self.sessions:
-            self.sessions[project_name] = str(uuid.uuid4())
+            self.sessions[project_name] = {
+                'session_id': None,  # Will be set after first run
+                'created_at': None,
+                'last_used': None,
+                'project_path': self.project_path
+            }
             self._save_sessions()
 
         return self.sessions[project_name]
+
+    def _update_session(self, session_id: str):
+        """Update session data after successful execution."""
+        project_name = self.config.get('project', {}).get('name', 'default')
+        now = datetime.now().isoformat()
+
+        if project_name not in self.sessions:
+            self.sessions[project_name] = {
+                'session_id': session_id,
+                'created_at': now,
+                'last_used': now,
+                'project_path': self.project_path
+            }
+        else:
+            self.sessions[project_name]['session_id'] = session_id
+            self.sessions[project_name]['last_used'] = now
+            if not self.sessions[project_name].get('created_at'):
+                self.sessions[project_name]['created_at'] = now
+            self.sessions[project_name]['project_path'] = self.project_path
+
+        self._save_sessions()
+
+    def reset_session(self) -> Dict[str, Any]:
+        """Reset the session for this project (create a new one)."""
+        project_name = self.config.get('project', {}).get('name', 'default')
+        old_session_id = self.sessions.get(project_name, {}).get('session_id')
+
+        # Clear the session
+        self.sessions[project_name] = {
+            'session_id': None,
+            'created_at': None,
+            'last_used': None,
+            'project_path': self.project_path,
+            'previous_session_id': old_session_id  # Keep reference to old session
+        }
+        self._save_sessions()
+
+        return {
+            'success': True,
+            'message': f'Session reset for {project_name}',
+            'old_session_id': old_session_id
+        }
 
     def execute_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a task using Claude Code."""
@@ -217,28 +303,38 @@ Please implement this task now."""
         return prompt
 
     def _execute_via_claude_code(self, prompt: str, task: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute the task using Claude Code CLI."""
+        """Execute the task using Claude Code CLI with session persistence."""
         try:
-            # Get session ID for context persistence
-            session_id = self._get_project_session_id()
+            # Get session data for this project
+            session_data = self._get_project_session()
+            session_id = session_data.get('session_id')
 
             # Build the Claude Code command
-            # Note: We use --no-session-persistence for stateless execution
-            # This prevents "session already in use" errors
             cmd = [
                 'claude',
                 '--print',  # Non-interactive mode
                 '--permission-mode', 'acceptEdits',  # Auto-accept edits
                 '--tools', 'default',  # Enable all tools
                 '--model', 'sonnet',  # Use Sonnet model
-                '--no-session-persistence',  # Don't save session (prevents conflicts)
                 '--output-format', 'text',  # Text output
-                prompt
             ]
 
-            # Execute Claude Code
-            print(f"  → Invoking Claude Code (stateless execution)...")
+            # Use --resume if we have an existing session
+            if session_id:
+                # Check if session file actually exists
+                session_file = self._get_session_file_path(session_id)
+                if session_file:
+                    cmd.extend(['--resume', session_id])
+                    print(f"  → Invoking Claude Code (resuming session {session_id[:8]}...)...")
+                else:
+                    print(f"  → Invoking Claude Code (new session, previous session file not found)...")
+            else:
+                print(f"  → Invoking Claude Code (new session)...")
 
+            # Add the prompt
+            cmd.append(prompt)
+
+            # Execute Claude Code
             result = subprocess.run(
                 cmd,
                 cwd=self.project_path,
@@ -248,15 +344,33 @@ Please implement this task now."""
             )
 
             if result.returncode == 0:
+                # Try to extract session ID from Claude's output or session index
+                new_session_id = self._extract_session_id_from_run()
+                if new_session_id:
+                    self._update_session(new_session_id)
+                elif session_id:
+                    # Update last_used timestamp for existing session
+                    self._update_session(session_id)
+
                 return {
                     'success': True,
                     'output': result.stdout,
-                    'session_id': session_id
+                    'session_id': new_session_id or session_id
                 }
             else:
+                error_msg = result.stderr or result.stdout
+
+                # Check for "session in use" error
+                if 'session' in error_msg.lower() and ('in use' in error_msg.lower() or 'already' in error_msg.lower()):
+                    return {
+                        'success': False,
+                        'error': f"Session is currently in use. Please close any manual Claude sessions for this project and try again.\n{error_msg}",
+                        'session_conflict': True
+                    }
+
                 return {
                     'success': False,
-                    'error': f"Claude Code exited with code {result.returncode}\n{result.stderr}"
+                    'error': f"Claude Code exited with code {result.returncode}\n{error_msg}"
                 }
 
         except subprocess.TimeoutExpired:
@@ -269,6 +383,65 @@ Please implement this task now."""
                 'success': False,
                 'error': f'Error executing Claude Code: {str(e)}'
             }
+
+    def _extract_session_id_from_run(self) -> Optional[str]:
+        """Extract the session ID from the most recent autonomous agent Claude run.
+
+        Filters to only include sessions that were started by the autonomous agent
+        (identified by the prompt pattern) to avoid picking up manual Claude sessions.
+        """
+        try:
+            project_dir = self._get_claude_project_dir()
+            sessions_index = os.path.join(project_dir, 'sessions-index.json')
+
+            # Pattern that identifies autonomous agent sessions
+            agent_prompt_prefix = "You are an autonomous developer working on"
+
+            if os.path.exists(sessions_index):
+                with open(sessions_index, 'r') as f:
+                    index_data = json.load(f)
+
+                entries = index_data.get('entries', [])
+                if entries:
+                    # Filter to only autonomous agent sessions
+                    agent_entries = [
+                        e for e in entries
+                        if e.get('firstPrompt', '').startswith(agent_prompt_prefix)
+                    ]
+
+                    if agent_entries:
+                        # Get the most recently modified autonomous agent session
+                        latest = max(agent_entries, key=lambda x: x.get('fileMtime', 0))
+                        return latest.get('sessionId')
+                    else:
+                        print(f"  ⚠ No autonomous agent sessions found in index, will create new session")
+                        return None
+
+            # Fallback: find most recent .jsonl file (less reliable, but check content)
+            if os.path.exists(project_dir):
+                jsonl_files = glob.glob(os.path.join(project_dir, '*.jsonl'))
+                # Filter out agent-* files
+                session_files = [f for f in jsonl_files if not os.path.basename(f).startswith('agent-')]
+
+                # Check each file's first line for the autonomous agent prompt
+                agent_sessions = []
+                for f in session_files:
+                    try:
+                        with open(f, 'r') as sf:
+                            first_line = sf.readline()
+                            if agent_prompt_prefix in first_line:
+                                agent_sessions.append(f)
+                    except:
+                        pass
+
+                if agent_sessions:
+                    latest_file = max(agent_sessions, key=os.path.getmtime)
+                    return os.path.basename(latest_file).replace('.jsonl', '')
+
+        except Exception as e:
+            print(f"  ⚠ Could not extract session ID: {e}")
+
+        return None
 
     def _check_git_status(self) -> Dict[str, Any]:
         """Check if there are uncommitted changes."""
@@ -482,6 +655,10 @@ NOTES: [Any additional observations]
 Begin verification now."""
 
         try:
+            # Get session data for this project (use same session as execution)
+            session_data = self._get_project_session()
+            session_id = session_data.get('session_id')
+
             # Execute verification using Claude Code
             cmd = [
                 'claude',
@@ -489,10 +666,16 @@ Begin verification now."""
                 '--permission-mode', 'acceptEdits',
                 '--tools', 'default',
                 '--model', 'sonnet',
-                '--no-session-persistence',
                 '--output-format', 'text',
-                verification_prompt
             ]
+
+            # Use same session for verification (maintains context)
+            if session_id:
+                session_file = self._get_session_file_path(session_id)
+                if session_file:
+                    cmd.extend(['--resume', session_id])
+
+            cmd.append(verification_prompt)
 
             result = subprocess.run(
                 cmd,

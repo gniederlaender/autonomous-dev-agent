@@ -128,9 +128,6 @@ class Reporter:
                 # Add task description if available
                 if task.get('description'):
                     desc = task.get('description', '')
-                    # Limit description length
-                    if len(desc) > 200:
-                        desc = desc[:200] + "..."
                     report += f"   - Description: {desc}\n"
 
                 if result.get('commit_hash'):
@@ -156,16 +153,14 @@ class Reporter:
                 elif verification and verification.get('skipped'):
                     report += f"   - Verification: Skipped ({verification.get('reason', 'Non-critical task')})\n"
 
-                # Add execution output summary (first 500 chars)
+                # Add execution output (full output, no truncation)
                 if result.get('output'):
                     output = result.get('output', '')
-                    # Extract meaningful parts (skip empty lines, limit length)
+                    # Extract meaningful parts (skip empty lines)
                     output_lines = [line.strip() for line in output.split('\n') if line.strip()]
                     if output_lines:
                         report += f"   - Execution Summary:\n"
-                        summary = '\n'.join(output_lines[:15])  # First 15 non-empty lines
-                        if len(summary) > 800:
-                            summary = summary[:800] + "..."
+                        summary = '\n'.join(output_lines)  # Full output, no line limit
                         # Indent each line for better formatting
                         for line in summary.split('\n'):
                             report += f"     {line}\n"
