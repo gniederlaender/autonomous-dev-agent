@@ -1,33 +1,37 @@
 project:
   admin_only: true
-  name: "Family Run Tracker"
-  path: "/opt/family_run"
-  repo: "gniederlaender/family_run"
+  name: "Review Cruncher"
+  path: "/opt/Review-Cruncher"
+  repo: "gniederlaender/Review-Cruncher"
   branch: "main"
+  description: "AI-powered product review aggregator and recommendation system"
 
 health_checks:
   - type: "http"
-    url: "https://smartprototypes.net/family_run/"
+    url: "https://www.reviewcruncher.com/"
     expected_status: 200
     timeout: 10
 
   - type: "api"
-    url: "https://smartprototypes.net/family_run/api/data"
+    url: "https://www.reviewcruncher.com/api/recent-reviews"
     expected_json: true
     timeout: 10
 
   - type: "pm2"
-    process_name: "family-run"
+    process_name: "review_cruncher_backend"
     expected_status: "online"
 
 feedback_sources:
   - type: "file"
-    path: "/opt/family_run/feedback.json"
+    path: "/opt/Review-Cruncher/feedback.json"
 
-  # Disabled: Log monitoring creates repetitive tasks for old log entries
+  # Note: Enable log monitoring if needed
   # - type: "logs"
-  #   path: "/opt/family_run/logs/error.log"
+  #   path: "/opt/Review-Cruncher/logs/error.log"
   #   max_lines: 100
+
+  - type: "todo"
+    path: "/opt/Review-Cruncher/TODO.md"
 
 safety_rules:
   autonomous_execution:
@@ -44,6 +48,7 @@ safety_rules:
     - breaking_api_changes
     - deployment_config_changes
     - infrastructure_changes
+    - api_key_changes
 
 execution:
   git_commit: true
@@ -58,8 +63,8 @@ communication:
   email:
     enabled: true
     to: "gabor.niederlaender@gmx.at"
-    from: "gabor.niederlaender@gmx.at"  # Must be your GMX email address
-    subject_prefix: "[Family Run Agent]"
+    from: "gabor.niederlaender@gmx.at"
+    subject_prefix: "[Review Cruncher Agent]"
     smtp_host: "mail.gmx.net"
     smtp_port: 587
     use_tls: true
@@ -67,5 +72,10 @@ communication:
 escalation:
   method: "email"
   to: "gabor.niederlaender@gmx.at"
+
+scheduling:
+  enabled: true
+  cron: "0 6 * * *"  # Daily at 6:00 AM
+  timezone: "Europe/Vienna"
 
 risk_tolerance: "medium"  # low, medium, high

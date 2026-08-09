@@ -1,4 +1,5 @@
 project:
+  admin_only: true
   name: "Tennis Booking Finder"
   path: "/opt/Tennis_Booking"
   repo: "gniederlaender/Tennis_Booking"  # Update with actual repo if exists

@@ -1,0 +1,41 @@
+project:
+  name: "Team 4"
+  path: "/opt/projects/team_4"
+  repo: ""
+  branch: "main"
+  team: true
+  team_id: "team_4"
+  api_key: "hack-team-4"
+  banking_api_url: "https://smartprototypes.net/banking-api"
+
+health_checks: []
+
+feedback_sources:
+  - type: "file"
+    path: "/opt/projects/team_4/feedback.json"
+
+safety_rules:
+  autonomous_execution:
+    - documentation_updates
+    - test_additions
+    - bug_fixes
+    - new_features
+    - refactoring
+    - schema_changes
+
+  always_escalate:
+    - security_vulnerabilities
+    - breaking_api_changes
+    - infrastructure_changes
+
+execution:
+  git_commit: true
+  git_push: false
+  git_user_name: "Hackathon Agent"
+  git_user_email: "agent@smartprototypes.net"
+
+communication:
+  report_format: "markdown"
+  report_path: "/opt/autonomous-dev-agent/reports"
+
+risk_tolerance: "medium"

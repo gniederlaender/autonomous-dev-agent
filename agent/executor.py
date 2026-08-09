@@ -2,9 +2,12 @@
 
 import subprocess
 import os
+import sys
 import json
 import uuid
 import glob
+import signal
+import threading
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -219,11 +222,48 @@ class Executor:
 - Tech stack: Python/Flask, HTML/CSS/JavaScript, JSON storage
 - Deployed at: https://smartprototypes.net/family_run/"""
 
+        elif self.config.get('project', {}).get('team'):
+            team_id = self.config.get('project', {}).get('team_id', '')
+            api_key = self.config.get('project', {}).get('api_key', '')
+            banking_url = self.config.get('project', {}).get('banking_api_url', 'https://smartprototypes.net/banking-api')
+            return f"""PROJECT CONTEXT:
+- This is a Hackathon Banking app for {project_name}
+- Located at: {self.project_path}
+- Tech stack: Python/Flask + HTML/CSS/JavaScript, served via Apache
+- Deployed at: https://smartprototypes.net/{team_id}/
+- Shared Banking API: {banking_url} (use header X-Team-Key: {api_key})
+- Shared George Theme CSS: https://smartprototypes.net/shared/george_theme.css
+  → Always include: <link rel="stylesheet" href="https://smartprototypes.net/shared/george_theme.css">
+  → Use classes: ib_card, ib_btn ib_btn--primary, ib_input-text, ace-frame, contract-header
+- Follow the spec.md in the project directory for all design and feature decisions
+- CRITICAL: Always add ProxyFix to app.py (needed for url_for() behind Apache subpath):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+- CRITICAL: Never hardcode absolute paths like href="/" or href="/route" in templates or JS.
+    In Jinja templates always use: href="{{ url_for('blueprint.endpoint') }}"
+    In JavaScript inject SCRIPT_ROOT via base template: <script>var SCRIPT_ROOT = "{{ request.script_root }}";</script>
+    Then use: window.location.href = SCRIPT_ROOT + '/route'
+    For fetch() calls: fetch(SCRIPT_ROOT + '/api/endpoint')"""
+
         else:
             # Generic context
             return f"""PROJECT CONTEXT:
 - Located at: {self.project_path}
 - Review the existing codebase to understand the project structure"""
+
+    def _get_spec_content(self) -> str:
+        """Read spec.md from the project directory if it exists."""
+        if not self.project_path:
+            return ''
+        spec_path = os.path.join(self.project_path, 'spec.md')
+        if os.path.exists(spec_path):
+            try:
+                with open(spec_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return content
+            except Exception:
+                return ''
+        return ''
 
     def _build_prompt(self, task: Dict[str, Any]) -> str:
         """Build a detailed prompt for Claude Code."""
@@ -236,10 +276,23 @@ class Executor:
         project_name = self.config.get('project', {}).get('name', 'Unknown Project')
         project_context = self._get_project_context()
 
+        # Load spec if available
+        spec_content = self._get_spec_content()
+        spec_section = ''
+        if spec_content:
+            spec_section = f"""
+## PROJECT SPECIFICATION (spec.md)
+The team has created the following technical specification. Implement tasks in accordance with it:
+
+{spec_content}
+
+---
+"""
+
         prompt = f"""You are an autonomous developer working on the {project_name} project.
 
 {project_context}
-
+{spec_section}
 TASK DETAILS:
 Type: {task_type}
 Priority: {priority}
@@ -304,6 +357,35 @@ Please implement this task now."""
 
     def _execute_via_claude_code(self, prompt: str, task: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the task using Claude Code CLI with session persistence."""
+        TIMEOUT_SECONDS = 1200  # 20 minutes
+        MAX_RETRIES = 5
+        RETRY_DELAY = 30  # seconds between retries for concurrency errors
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            result = self._attempt_claude_code(prompt, task, TIMEOUT_SECONDS)
+            error_msg = result.get('error', '')
+            if result.get('success') or result.get('timed_out'):
+                return result
+            # Retry only on transient concurrency/overload errors
+            is_transient = (
+                'concurrency' in error_msg.lower() or
+                '529' in error_msg or
+                'overloaded' in error_msg.lower() or
+                'rate limit' in error_msg.lower() or
+                'tool use concurrency' in error_msg.lower()
+            )
+            if attempt < MAX_RETRIES and is_transient:
+                wait = RETRY_DELAY * attempt  # back-off: 30s, 60s, 90s, 120s
+                print(f"  → Concurrency/overload error (attempt {attempt}/{MAX_RETRIES}). Retrying in {wait}s...")
+                import time
+                time.sleep(wait)
+                continue
+            return result
+
+        return {'success': False, 'error': f'Failed after {MAX_RETRIES} attempts due to concurrency issues.'}
+
+    def _attempt_claude_code(self, prompt: str, task: Dict[str, Any], TIMEOUT_SECONDS: int) -> Dict[str, Any]:
+        """Single attempt to execute via Claude Code CLI."""
         try:
             # Get session data for this project
             session_data = self._get_project_session()
@@ -317,6 +399,7 @@ Please implement this task now."""
                 '--tools', 'default',  # Enable all tools
                 '--model', 'sonnet',  # Use Sonnet model
                 '--output-format', 'text',  # Text output
+                '--max-budget-usd', '5',  # Cap spending per run at $5
             ]
 
             # Use --resume if we have an existing session
@@ -334,16 +417,78 @@ Please implement this task now."""
             # Add the prompt
             cmd.append(prompt)
 
-            # Execute Claude Code
-            result = subprocess.run(
+            # Use Popen so we can:
+            #  a) stream Claude's output live to the log file (via inherited stdout)
+            #  b) also capture it to a buffer for error detection
+            #  c) kill cleanly on timeout
+
+            # We tee stdout: write to sys.stdout (→ log file) AND capture to buffer
+            stdout_lines = []
+            stderr_lines = []
+
+            def _tee_stream(stream, lines_buf, label=None):
+                """Read stream line-by-line, print each line and buffer it."""
+                for line in iter(stream.readline, ''):
+                    if label:
+                        sys.stdout.write(f'[claude] {line}')
+                    else:
+                        sys.stdout.write(line)
+                    sys.stdout.flush()
+                    lines_buf.append(line)
+                stream.close()
+
+            process = subprocess.Popen(
                 cmd,
                 cwd=self.project_path,
-                capture_output=True,
+                stdin=subprocess.DEVNULL,   # CRITICAL: prevent inheriting parent stdin (would make claude interactive)
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=600  # 10 minute timeout
+                bufsize=1,  # line-buffered
+                start_new_session=True  # Own process group so we can kill cleanly
             )
 
-            if result.returncode == 0:
+            # Start tee threads for stdout and stderr
+            t_out = threading.Thread(target=_tee_stream, args=(process.stdout, stdout_lines), daemon=True)
+            t_err = threading.Thread(target=_tee_stream, args=(process.stderr, stderr_lines, 'err'), daemon=True)
+            t_out.start()
+            t_err.start()
+
+            try:
+                # Wait for process with timeout
+                process.wait(timeout=TIMEOUT_SECONDS)
+                t_out.join(timeout=5)
+                t_err.join(timeout=5)
+            except subprocess.TimeoutExpired:
+                # Kill the entire process group to stop Claude Code and any children
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    process.wait(timeout=10)
+                except Exception:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+                t_out.join(timeout=5)
+                t_err.join(timeout=5)
+                # Try to save session so next run can resume where it left off
+                new_session_id = self._extract_session_id_from_run()
+                if new_session_id:
+                    self._update_session(new_session_id)
+                    print(f"  → Timed out after {TIMEOUT_SECONDS//60} minutes. Session saved ({new_session_id[:8]}...) — next run will resume.")
+                else:
+                    print(f"  → Timed out after {TIMEOUT_SECONDS//60} minutes. No session saved.")
+                return {
+                    'success': False,
+                    'error': f'Execution timed out after {TIMEOUT_SECONDS//60} minutes. Progress saved — run again to continue.',
+                    'timed_out': True
+                }
+
+            stdout = ''.join(stdout_lines)
+            stderr = ''.join(stderr_lines)
+            returncode = process.returncode
+
+            if returncode == 0:
                 # Try to extract session ID from Claude's output or session index
                 new_session_id = self._extract_session_id_from_run()
                 if new_session_id:
@@ -354,11 +499,11 @@ Please implement this task now."""
 
                 return {
                     'success': True,
-                    'output': result.stdout,
+                    'output': stdout,
                     'session_id': new_session_id or session_id
                 }
             else:
-                error_msg = result.stderr or result.stdout
+                error_msg = stderr or stdout
 
                 # Check for "session in use" error
                 if 'session' in error_msg.lower() and ('in use' in error_msg.lower() or 'already' in error_msg.lower()):
@@ -370,14 +515,9 @@ Please implement this task now."""
 
                 return {
                     'success': False,
-                    'error': f"Claude Code exited with code {result.returncode}\n{error_msg}"
+                    'error': f"Claude Code exited with code {returncode}\n{error_msg}"
                 }
 
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False,
-                'error': 'Execution timed out after 10 minutes'
-            }
         except Exception as e:
             return {
                 'success': False,
@@ -680,6 +820,7 @@ Begin verification now."""
             result = subprocess.run(
                 cmd,
                 cwd=self.project_path,
+                stdin=subprocess.DEVNULL,  # prevent interactive mode
                 capture_output=True,
                 text=True,
                 timeout=600  # 10 minute timeout for verification (critical tasks only)
@@ -730,7 +871,7 @@ Begin verification now."""
         except subprocess.TimeoutExpired:
             return {
                 'passed': False,
-                'issues': 'Verification timed out after 10 minutes',
+                'issues': 'Verification timed out after 10 minutes (600s)',
                 'verified_at': datetime.now().isoformat()
             }
         except Exception as e:

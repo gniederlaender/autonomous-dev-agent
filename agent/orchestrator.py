@@ -154,7 +154,11 @@ class Orchestrator:
                                         completion_notes
                                     )
                         else:
-                            print(f"      ❌ Task failed: {exec_result.get('error')}")
+                            if exec_result.get('timed_out'):
+                                print(f"      ⏱ Task timed out: {exec_result.get('error')}")
+                                print(f"      → Session saved. Re-run agent to continue where it left off.")
+                            else:
+                                print(f"      ❌ Task failed: {exec_result.get('error')}")
                             run_result['errors'].append({
                                 'context': f"Task execution: {task.get('title')}",
                                 'message': exec_result.get('error')
